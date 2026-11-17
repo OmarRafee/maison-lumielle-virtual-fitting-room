@@ -228,7 +228,7 @@ Deno.serve(async (request: Request) => {
       output_format: "jpeg",
       return_base64: true,
       moderation_level: "conservative",
-      garment_photo_type: "flat-lay",
+      garment_photo_type: "auto",
       segmentation_free: true,
     });
 
