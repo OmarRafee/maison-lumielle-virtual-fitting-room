@@ -1,38 +1,26 @@
-# Maison Lumielle — Virtual Fitting Room Prototype
+# Maison Lumielle — AI Virtual Fitting Room Test
 
-A responsive Next.js prototype for testing the customer journey for a fashion virtual try-on.
+A small Next.js test app. Select a look, upload your photo and a product photo, then generate a try-on preview.
 
-## Features
-- Customer photo upload with preview (JPG, PNG, WebP; max 15 MB)
-- Product gallery with sample Maison Lumielle item and custom garment uploads
-- Optional height, weight and general-build context
-- Background selection
-- Explicit face-photo consent and separate optional marketing consent
-- Review panel with customer and garment previews
-- Prompt preparation for manual image generation
-- Upload and download of the generated result
-- Clear local photo previews
+## Run the test locally
 
-## Image generation
-This version deliberately has **no image-generation API and no backend**. The "Prepare try-on prompt" action copies a detailed prompt. Use it with the two reference photos in your chosen image-generation tool, then upload the generated image to the result area.
+Requires Node.js 20.9+ and an OpenAI API key with image generation access.
 
-A production service needs a secure backend and image-generation provider. Never put provider API keys in browser code.
-
-## Privacy
-Selected images are previewed using temporary browser object URLs. Photos are not sent to this project's server or an AI provider. Refreshing or closing the tab clears the in-page state.
-
-## Run locally
-Requires Node.js 20.9+.
+1. Copy .env.example to .env.local.
+2. Replace the placeholder with your OpenAI API key. Keep .env.local private and do not commit it.
+3. Run:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open http://localhost:3000, choose a product, upload a photo of yourself and the clothing, accept the photo processing consent, and select **Generate my try-on**.
 
-## Deploy
-Import this repository into Vercel. Framework preset: Next.js. No environment variables are required for this prototype.
+Each generation uses OpenAI API credits and may incur charges. The app sends both photos to OpenAI only after you choose Generate. This test app does not save them to a database.
 
-## Product image
-`public/products/charcoal-pleated-maxi.png` is the supplied sample product image. Other products are illustrative placeholders.
+The generator uses the OpenAI Images API with GPT Image 2.5 Flare in low quality to keep the test simple. It returns a generated JPEG directly to the page for preview and download.
+
+## Deployment
+
+This test branch requires a server-side Next.js host because the image API key must remain on the server. The current GitHub Pages site stays unchanged. Do not publish the API key in browser code or commit it to Git.
