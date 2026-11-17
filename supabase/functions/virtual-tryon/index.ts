@@ -177,8 +177,8 @@ Deno.serve(async (request: Request) => {
       return json({ error: "Unsupported action." }, 400, headers);
     }
 
-    const { modelImage, garmentImage, category, photoType } = body;
-    if (!isImageDataUri(modelImage) || !isImageDataUri(garmentImage)) {
+    const { modelImage: submittedModelImage, garmentImage, category, photoType } = body;
+    if (!isImageDataUri(submittedModelImage) || !isImageDataUri(garmentImage)) {
       return json({ error: "Both photos must be valid JPG, PNG or WebP images. Please choose smaller files if they are too large." }, 400, headers);
     }
     if (!["tops", "bottoms"].includes(category)) {
@@ -202,7 +202,7 @@ Deno.serve(async (request: Request) => {
       return json({ error: "You have reached the limit of 5 try-on requests per hour. Please try again later." }, 429, headers);
     }
 
-    let modelImage = modelImage as string;
+    let modelImage = submittedModelImage as string;
     if (photoType === "face") {
       const facePrediction = await startFashnPrediction(fashnApiKey, "face-to-model", {
         face_image: modelImage,
