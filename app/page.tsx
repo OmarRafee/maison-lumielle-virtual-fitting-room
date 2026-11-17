@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 type ProductId = "hoodie" | "jeans";
 type PhotoType = "face" | "upper-body" | "full-body";
@@ -28,20 +27,6 @@ const products: Array<{
     tone: "jeans",
   },
 ];
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-let supabaseClient: SupabaseClient | null = null;
-
-function getSupabaseClient() {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    throw new Error("The try-on backend is not configured yet. Add the Supabase URL and publishable/anon key, then rebuild the site.");
-  }
-  if (!supabaseClient) {
-    supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  }
-  return supabaseClient;
-}
 
 function fileToDataUri(blob: Blob) {
   return new Promise<string>((resolve, reject) => {
@@ -88,10 +73,6 @@ async function compressImage(file: File) {
   throw new Error("This image is too large to send safely. Please choose a smaller photo.");
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
 export default function Home() {
   const [person, setPerson] = useState<File | null>(null);
   const [garments, setGarments] = useState<Record<ProductId, File | null>>({
@@ -104,12 +85,12 @@ export default function Home() {
   const [selected, setSelected] = useState<ProductId>("hoodie");
   const [photoType, setPhotoType] = useState<PhotoType>("upper-body");
   const [consent, setConsent] = useState(false);
+  const [apiKey, setApiKey] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [status, setStatus] = useState("Upload your photo and a Maison Lumielle product image to begin.");
 
   const product = products.find((item) => item.id === selected)!;
   const garment = garments[selected];
-  const backendConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
   useEffect(() => {
     if (!person) {
@@ -194,61 +175,42 @@ export default function Home() {
       return;
     }
 
+    if (!apiKey.trim()) {
+      setStatus("Enter your FASHN API key to generate a test image.");
+      return;
+    }
+
     setIsGenerating(true);
     setResultImage("");
     try {
-      const client = getSupabaseClient();
-      const { data: sessionData, error: sessionError } = await client.auth.getSession();
-      if (sessionError) throw sessionError;
-      if (!sessionData.session) {
-        const { error: signInError } = await client.auth.signInAnonymously();
-        if (signInError) {
-          throw new Error("Supabase anonymous sign-in is not enabled yet. Enable it in Authentication → Providers → Anonymous.");
-        }
-      }
-
-      setStatus(photoType === "face"
-        ? "Preparing your selfie, then fitting the hoodie. This can take up to a minute."
-        : "Sending your photos securely to the try-on service…");
-
-      const [modelImage, garmentImage] = await Promise.all([
-        compressImage(person),
-        compressImage(garment),
-      ]);
-
-      const { data, error } = await client.functions.invoke("virtual-tryon", {
-        body: {
-          action: "generate",
-          modelImage,
-          garmentImage,
-          category: product.category,
-          photoType,
-        },
+      setStatus("Preparing your photos and sending them to FASHN AI…");
+      const [personImage, garmentImage] = await Promise.all([compressImage(person), compressImage(garment)]);
+      const physique = "The person is 190 cm tall, weighs 80 kg, and has a naturally athletic, lightly muscular build with subtle definition—not exaggerated bodybuilding muscles.";
+      const clothing = selected === "hoodie"
+        ? "Dress him in the exact hoodie shown in the second image, preserving its color, shape, logo, seams, and fabric details."
+        : "Dress him in the exact jeans shown in the second image, preserving their color, cut, cargo pockets, seams, and fabric details.";
+      const framing = photoType === "full-body" || selected === "jeans"
+        ? "Create a realistic full-body fashion photograph with the person’s face and shoes visible."
+        : "Create a realistic waist-up fashion photograph, keeping the person’s face clearly recognizable.";
+      const prompt = "Use the first image as the identity reference for the same adult man. Use the second image as the exact garment reference. " + clothing + " " + framing + " " + physique + " Keep his facial identity, skin tone, hair, and beard recognizable. Natural human anatomy, realistic fabric folds and lighting, premium fashion campaign photography, simple neutral studio background. Do not add text, accessories, or extra clothing pieces.";
+      setStatus("The AI is creating your look. This may take about a minute…");
+      const response = await fetch("https://api.fashn.ai/v1/agent/images", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + apiKey.trim(), "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, images: [personImage, garmentImage], aspect_ratio: selected === "jeans" ? "2:3" : "3:4", resolution: "1k", generation_mode: "fast" }),
       });
-      if (error) throw new Error(error.message || "Could not start the try-on.");
-      if (!data?.predictionId) throw new Error(data?.error || "The try-on service did not return a prediction ID.");
-
-      const predictionId = String(data.predictionId);
-      setStatus("The AI is creating your look…");
-      for (let attempt = 0; attempt < 45; attempt += 1) {
-        await sleep(1500);
-        const { data: progress, error: progressError } = await client.functions.invoke("virtual-tryon", {
-          body: { action: "status", predictionId },
-        });
-        if (progressError) throw new Error(progressError.message || "Could not check generation status.");
-        if (progress?.status === "completed" && typeof progress.image === "string") {
-          setResultImage(progress.image);
-          setStatus("Your AI try-on is ready. Review it, then download your image.");
-          return;
-        }
-        if (progress?.status === "failed") {
-          throw new Error(progress.error || "The AI could not complete this try-on. Try clearer photos.");
-        }
-        setStatus("The AI is fitting your garment…");
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        const apiMessage = data?.error?.message || data?.message;
+        throw new Error(apiMessage || "FASHN returned HTTP " + response.status + ". Check your API key, credits, and image files.");
       }
-      throw new Error("This generation is taking longer than expected. Please try again in a moment.");
+      const image = data?.predictions?.find((prediction: { status?: string; results?: string[] }) => prediction.status === "completed" && prediction.results?.length)?.results?.[0];
+      if (data?.status !== "completed" || typeof image !== "string") throw new Error(data?.error?.message || "FASHN did not return an image. Try clearer photos.");
+      setResultImage(image);
+      setStatus("Your AI try-on is ready. FASHN used " + (data.credits_used ?? "unknown") + " credit(s). Review it, then download your image.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Something went wrong while generating your try-on.");
+      const message = error instanceof Error ? error.message : "Something went wrong while generating your try-on.";
+      setStatus(message.includes("fetch") || message.includes("NetworkError") ? "The browser could not reach FASHN. Check your connection or whether FASHN allows direct browser requests. If browser access is blocked, generation cannot work without a backend." : message);
     } finally {
       setIsGenerating(false);
     }
@@ -259,7 +221,8 @@ export default function Home() {
     setGarments({ hoodie: null, jeans: null });
     setResultImage("");
     setConsent(false);
-    setStatus("Your selected photos have been cleared.");
+    setApiKey("");
+    setStatus("Your selected photos and test key have been cleared.");
   }
 
   return (
@@ -364,11 +327,14 @@ export default function Home() {
             </div>
             <p className="meta">SELECTED PRODUCT <b>{product.name}</b></p>
             <p className="meta">TRY-ON TYPE <b>{photoType === "face" ? "Selfie → upper-body avatar → hoodie" : photoType === "upper-body" ? "Upper-body → hoodie" : "Full-body → " + (selected === "jeans" ? "jeans" : "hoodie")}</b></p>
-            <button className="prepare" onClick={generateTryOn} disabled={isGenerating || !person || !garment || !consent}>
+            <label className="field">FASHN TEST API KEY
+              <input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste your FASHN API key" />
+            </label>
+            <p className="note warning"><b>Test only:</b> this static page sends your photos directly to FASHN. The key is kept in this tab and cleared with Delete, but browser users can inspect it. Never use this setup for customers or a public launch.</p>
+            <button className="prepare" onClick={generateTryOn} disabled={isGenerating || !person || !garment || !consent || !apiKey.trim()}>
               {isGenerating ? "GENERATING YOUR LOOK…" : "GENERATE MY AI TRY-ON ↗"}
             </button>
-            {!backendConfigured && <p className="note warning"><b>Backend setup required:</b> add the Supabase environment variables and deploy the Edge Function before generation can run.</p>}
-            <p className="note">The AI preview is not a measurement or size recommendation. Height and weight are not used by this image model; always check the brand's size guide.</p>
+            <p className="note">The AI follows the 190 cm, 80 kg and lightly muscular build prompt as a visual guide; it cannot guarantee exact body proportions or clothing fit.</p>
           </div>
 
           <div className="result">
@@ -400,7 +366,7 @@ export default function Home() {
 
       <section className="privacy">
         <div><p className="eyebrow">YOUR IMAGE. YOUR CHOICE.</p><h2>Privacy, <i>by design.</i></h2></div>
-        <p>The website sends compressed copies of the selected images to your Supabase Edge Function, which forwards them to FASHN for the requested generation. The FASHN key stays on the server. This app does not save customer photos or generated images to its own database.</p>
+        <p>This test page sends compressed copies of your selected images directly from your browser to FASHN. The API key is entered in the page and is visible to browser users. Do not use real customer data or publish this test setup.</p>
       </section>
 
       <footer>
